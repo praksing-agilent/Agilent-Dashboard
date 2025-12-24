@@ -1,0 +1,1157 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Customer Visit App</title>
+
+    <!-- Debug Error Logger -->
+    <script>
+        window.onerror = function (msg, url, line, col, error) {
+            const div = document.createElement('div');
+            div.style.position = 'fixed';
+            div.style.top = '0';
+            div.style.left = '0';
+            div.style.width = '100%';
+            div.style.backgroundColor = '#ffffee';
+            div.style.color = 'red';
+            div.style.padding = '20px';
+            div.style.zIndex = '9999';
+            div.style.borderBottom = '1px solid black';
+            div.style.fontFamily = 'monospace';
+            div.innerText = 'JS Error: ' + msg + '\n' + url + ':' + line + ':' + col;
+            document.body.appendChild(div);
+            return false;
+        };
+        window.addEventListener('unhandledrejection', function (event) {
+            const div = document.createElement('div');
+            div.style.position = 'fixed';
+            div.style.top = '50px';
+            div.style.left = '0';
+            div.style.width = '100%';
+            div.style.backgroundColor = '#ffeeee';
+            div.style.color = 'darkred';
+            div.style.padding = '20px';
+            div.style.zIndex = '9999';
+            div.style.borderBottom = '1px solid black';
+            div.style.fontFamily = 'monospace';
+            div.innerText = 'Uncaught Promise: ' + event.reason;
+            document.body.appendChild(div);
+        });
+    </script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@300;400;500;600;700&display=swap"
+        rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600&display=swap" rel="stylesheet">
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        'agilent-blue': '#0091D5',
+                        'agilent-dark': '#005A87',
+                        'agilent-light': '#E6F4FA',
+                        'card-bg': 'var(--card-bg)',
+                        'bg-main': 'var(--bg-main)',
+                        'text-primary': 'var(--text-primary)',
+                        'text-secondary': 'var(--text-secondary)',
+                        'border-color': 'var(--border-color)',
+                    },
+                    fontFamily: {
+                        sans: ['Segoe UI', 'Outfit', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- Custom CSS Variables -->
+    <style type="text/tailwindcss">
+        @layer base {
+            :root {
+                --card-bg: #ffffff;
+                --bg-main: #f0f2f5;
+                --text-primary: #323130;
+                --text-secondary: #605e5c;
+                --border-color: #e1dfdd;
+            }
+            .dark {
+                --card-bg: #1e1e1e;
+                --bg-main: #121212;
+                --text-primary: #e5e5e5;
+                --text-secondary: #a0a0a0;
+                --border-color: #333333;
+                --agilent-dark: #00B4FF; 
+                --agilent-light: #0a2540;
+            }
+            body { 
+                @apply bg-bg-main text-text-primary transition-colors duration-200;
+            }
+        }
+        
+        /* Custom Scrollbar for Tables */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            @apply bg-gray-300 dark:bg-gray-700 rounded;
+        }
+    </style>
+
+    <!-- React & Related Libraries -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- UI & Data Libraries -->
+    <script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/clsx@2.0.0/dist/clsx.min.js"></script>
+    <!-- Removed tailwind-merge to avoid UMD issues, using clsx only which is sufficient for this scope -->
+
+</head>
+
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // Global Namespace and Utils
+        window.DashboardApp = {};
+        window.Lucide = window.lucide;
+        // Simple cn utility using clsx (window.clsx is exposed by the CDN as `clsx` or `clsx.clsx` usually, let's check)
+        // unpkg clsx exposes `window.clsx` function directly usually.
+        window.cn = (...inputs) => window.clsx ? window.clsx(inputs) : inputs.filter(Boolean).join(' ');
+
+        // ---------------------------------------------------------
+        // SharePoint Modal Component (No-MSAL Version)
+        // ---------------------------------------------------------
+
+        window.DashboardApp.UploadModal = ({ isOpen, onClose }) => {
+            const { useContext, useState, useEffect } = React;
+            const { processUploadedData } = useContext(window.DashboardApp.DashboardContext);
+            const { Icon } = window.DashboardApp;
+
+            // Steps: 'config' -> 'mapping'
+            const [step, setStep] = useState('config');
+            // Source Mode: 'list' or 'excel'
+            const [sourceMode, setSourceMode] = useState('list');
+            const [config, setConfig] = useState({
+                siteUrl: '',
+                listName: '',
+                excelUrl: '', // New: for pasting direct link
+            });
+            const [availableLists, setAvailableLists] = useState([]);
+            const [statusMsg, setStatusMsg] = useState('');
+            const [isListsLoaded, setIsListsLoaded] = useState(false);
+
+            // Mapping State
+            const [fileHeaders, setFileHeaders] = useState([]);
+            const [jsonData, setJsonData] = useState([]);
+            const [mapping, setMapping] = useState({});
+
+            const SYSTEM_FIELDS = [
+                { key: 'Country', label: 'Country', required: true },
+                { key: 'Sales Rep Name', label: 'Sales Rep Name', required: true },
+                { key: 'Customer Name', label: 'Customer Name', required: true },
+                { key: 'GTM', label: 'GTM Information', required: false },
+                { key: 'Product Line', label: 'Product Line', required: false },
+                { key: 'Tech Upgrade Oppty', label: 'Tech Upgrade Oppty (Yes/No)', required: false },
+                { key: 'Demo Oppty', label: 'Demo Oppty (High/Med/Low/NA)', required: false },
+                { key: 'Follow-up Planned', label: 'Follow-up Planned (Yes/No)', required: false },
+                { key: 'Meeting Date', label: 'Meeting Date', required: true },
+            ];
+
+            useEffect(() => {
+                if (!isOpen) {
+                    setStep('config');
+                    setStatusMsg('');
+                    setJsonData([]);
+                    setIsListsLoaded(false);
+                    setAvailableLists([]);
+                }
+            }, [isOpen]);
+
+            const fetchLists = async () => {
+                if (!config.siteUrl) { alert("Please enter Site URL"); return; }
+
+                try {
+                    setStatusMsg("Connecting to site...");
+                    const baseUrl = config.siteUrl.replace(/\/$/, "");
+                    // Fetch visible lists
+                    const endpoint = `${baseUrl}/_api/web/lists?$select=Title,ItemCount,Hidden&$filter=Hidden eq false`;
+
+                    const resp = await fetch(endpoint, {
+                        headers: { "Accept": "application/json;odata=verbose" }
+                    });
+
+                    if (!resp.ok) {
+                        if (resp.status === 401 || resp.status === 403) throw new Error("Access Denied. Ensure you are signed in.");
+                        throw new Error(`Connection Failed: ${resp.statusText}`);
+                    }
+
+                    const json = await resp.json();
+                    let lists = [];
+                    if (json.d && json.d.results) lists = json.d.results;
+                    else if (json.value) lists = json.value;
+
+                    if (lists.length > 0) {
+                        setAvailableLists(lists);
+                        setIsListsLoaded(true);
+                        setStatusMsg("Connected! Select a list.");
+                        // Default to first list if not set
+                        if (!config.listName) setConfig(prev => ({ ...prev, listName: lists[0].Title }));
+                    } else {
+                        setStatusMsg("Connected, but no visible lists found.");
+                    }
+
+                } catch (e) {
+                    console.error(e);
+                    setStatusMsg("Error: " + e.message);
+                }
+            };
+
+            const handleFetchItems = async () => {
+                if (!config.siteUrl || !config.listName) { alert("Please select a list"); return; }
+
+                try {
+                    setStatusMsg(`Fetching items from '${config.listName}'...`);
+                    const baseUrl = config.siteUrl.replace(/\/$/, "");
+                    const endpoint = `${baseUrl}/_api/web/lists/getbytitle('${config.listName}')/items`;
+
+                    const resp = await fetch(endpoint, {
+                        headers: { "Accept": "application/json;odata=verbose" }
+                    });
+
+                    if (!resp.ok) throw new Error(`Fetch Failed: ${resp.statusText}`);
+
+                    const json = await resp.json();
+                    let items = [];
+                    if (json.d && json.d.results) items = json.d.results;
+                    else if (json.value) items = json.value;
+
+                    if (items.length > 0) {
+                        processFetchedData(items, `SharePoint List: ${config.listName}`);
+                    } else {
+                        setStatusMsg("List is empty.");
+                    }
+
+                } catch (e) {
+                    setStatusMsg("Error: " + e.message);
+                }
+            };
+
+            const handleFetchExcel = async () => {
+                if (!config.excelUrl) { alert("Please paste the OneDrive/SharePoint link"); return; }
+
+                try {
+                    setStatusMsg(`Analyzing link and fetching...`);
+
+                    let targetUrl = config.excelUrl.trim();
+                    const urlObj = new URL(targetUrl);
+
+                    // Helper: Correct MS Graph/SharePoint base64 encoding for shares API
+                    const encodeShareUrl = (url) => {
+                        // btoa doesn't handle non-ASCII, so we use encodeURIComponent + unescape pattern
+                        const b64 = btoa(unescape(encodeURIComponent(url)))
+                            .replace(/=/g, '')
+                            .replace(/\//g, '_')
+                            .replace(/\+/g, '-');
+                        return 'u!' + b64;
+                    };
+
+                    let endpoint = "";
+
+                    // Attempt to resolve known SharePoint/OneDrive link formats
+                    const idParam = urlObj.searchParams.get("id");
+                    const sourceUrlParam = urlObj.searchParams.get("SourceUrl");
+                    const sourcedocParam = urlObj.searchParams.get("sourcedoc");
+
+                    if (idParam || sourceUrlParam) {
+                        const path = idParam || sourceUrlParam;
+                        endpoint = `https://${urlObj.hostname}/_api/web/GetFileByServerRelativeUrl('${path}')/$value`;
+                    } else if (sourcedocParam) {
+                        endpoint = `https://${urlObj.hostname}/_api/web/GetFileById('${sourcedocParam}')/$value`;
+                    } else {
+                        // Use the shares API for any share link
+                        endpoint = `https://${urlObj.hostname}/_api/v2.0/shares/${encodeShareUrl(targetUrl)}/driveItem/content`;
+                    }
+
+                    console.log("Fetching from endpoint:", endpoint);
+
+                    const resp = await fetch(endpoint, {
+                        headers: { "Accept": "application/octet-stream" }
+                    });
+
+                    if (!resp.ok) {
+                        if (resp.status === 401 || resp.status === 403) {
+                            throw new Error("Access Denied. For private files, ensure you are signed in to SharePoint in another tab of this browser.");
+                        }
+                        if (resp.status === 404) {
+                            throw new Error("File not found. Ensure the link is correct and accessible.");
+                        }
+                        throw new Error(`Connection Error (${resp.status}): ${resp.statusText}`);
+                    }
+
+                    const arrayBuffer = await resp.arrayBuffer();
+                    const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+                    const sheetName = workbook.SheetNames[0];
+                    const sheet = workbook.Sheets[sheetName];
+                    const json = XLSX.utils.sheet_to_json(sheet);
+
+                    if (json && json.length > 0) {
+                        const fileName = targetUrl.split('/').pop().split('?')[0] || "Excel Data";
+                        processFetchedData(json, `Excel: ${fileName}`);
+                    } else {
+                        setStatusMsg("Excel file is empty or headers are missing.");
+                    }
+
+                } catch (e) {
+                    console.error("Fetch Error Detail:", e);
+                    let msg = e.message;
+                    if (msg.includes("Failed to fetch")) {
+                        msg = "Network or CORS error. Ensure you are visiting this dashboard from the SAME domain as the Excel file, or enable CORS in your browser.";
+                    }
+                    setStatusMsg("Error: " + msg);
+                }
+            };
+
+            const handleLocalFile = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                setStatusMsg(`Reading local file: ${file.name}...`);
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    try {
+                        const data = new Uint8Array(event.target.result);
+                        const workbook = XLSX.read(data, { type: 'array' });
+                        const sheetName = workbook.SheetNames[0];
+                        const sheet = workbook.Sheets[sheetName];
+                        const json = XLSX.utils.sheet_to_json(sheet);
+
+                        if (json && json.length > 0) {
+                            processFetchedData(json, `Local File: ${file.name}`);
+                        } else {
+                            setStatusMsg("File is empty or invalid.");
+                        }
+                    } catch (err) {
+                        setStatusMsg("Error parsing file: " + err.message);
+                    }
+                };
+                reader.onerror = () => setStatusMsg("Error reading file.");
+                reader.readAsArrayBuffer(file);
+            };
+
+            const processFetchedData = (items, sourceLabel) => {
+                setJsonData(items);
+                const headers = Object.keys(items[0]).filter(k => k !== '__metadata' && k !== 'ID' && k !== 'Id');
+                setFileHeaders(headers);
+
+                // Auto-map
+                const newMapping = {};
+                SYSTEM_FIELDS.forEach(field => {
+                    const match = headers.find(h => {
+                        const hLower = h.toLowerCase();
+                        const fLower = field.label.toLowerCase();
+                        const kLower = field.key.toLowerCase();
+                        return hLower.includes(fLower) || hLower === kLower || fLower.includes(hLower);
+                    });
+                    if (match) newMapping[field.key] = match;
+                });
+                setMapping(newMapping);
+                setStep('mapping');
+                setStatusMsg('');
+                setConfig(prev => ({ ...prev, _sourceLabel: sourceLabel }));
+            };
+
+            const handleProcess = () => {
+                processUploadedData(config._sourceLabel || "Imported Data", jsonData, mapping);
+                onClose();
+            };
+
+            if (!isOpen) return null;
+
+            return (
+                <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center animate-in fade-in duration-200">
+                    <div className="bg-white dark:bg-[#1e1e1e] rounded-lg shadow-xl w-[600px] max-w-[90vw] max-h-[90vh] flex flex-col">
+                        <div className="p-4 border-b border-border-color flex justify-between items-center">
+                            <h3 className="font-semibold text-lg text-text-primary">Manage Data Source</h3>
+                            <button onClick={onClose} className="text-text-secondary hover:text-text-primary"><Icon name="x" size={20} /></button>
+                        </div>
+
+                        {step === 'config' && (
+                            <div className="flex border-b border-border-color">
+                                {['local', 'list', 'excel'].map(mode => (
+                                    <button
+                                        key={mode}
+                                        onClick={() => setSourceMode(mode)}
+                                        className={window.cn(
+                                            "flex-1 py-3 text-xs uppercase tracking-wider font-semibold transition-colors",
+                                            sourceMode === mode ? "border-b-2 border-agilent-blue text-agilent-blue" : "text-text-secondary hover:text-text-primary"
+                                        )}
+                                    >
+                                        {mode === 'local' ? 'Local File' : mode === 'list' ? 'SP List' : 'OneDrive Link'}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+
+                        <div className="p-6 overflow-y-auto flex-1 custom-scrollbar space-y-4">
+                            {step === 'config' && (
+                                <div className="space-y-4">
+                                    <div className="bg-blue-50 dark:bg-blue-900/20 text-blue-800 dark:text-blue-300 p-3 rounded text-sm">
+                                        <strong>Note:</strong> Requires authenticated browser context in this tab.
+                                    </div>
+
+                                    <div className="space-y-3">
+                                        {sourceMode === 'local' ? (
+                                            <div className="space-y-4">
+                                                <div className="border-2 border-dashed border-border-color rounded-lg p-8 text-center hover:border-agilent-blue transition-colors group relative cursor-pointer">
+                                                    <input
+                                                        type="file"
+                                                        accept=".xlsx,.xls,.csv"
+                                                        className="absolute inset-0 opacity-0 cursor-pointer"
+                                                        onChange={handleLocalFile}
+                                                    />
+                                                    <div className="flex flex-col items-center gap-2">
+                                                        <Icon name="upload" size={32} className="text-text-secondary group-hover:text-agilent-blue" />
+                                                        <p className="text-sm font-medium text-text-primary">Click or drag file to upload</p>
+                                                        <p className="text-xs text-text-secondary">Supports .xlsx, .xls, .csv</p>
+                                                    </div>
+                                                </div>
+                                                <div className="bg-gray-50 dark:bg-white/5 p-3 rounded text-[11px] text-text-secondary border border-border-color/50">
+                                                    <strong>Note:</strong> This is the most reliable method if you're hitting "Access Denied" or CORS errors with SharePoint links.
+                                                </div>
+                                            </div>
+                                        ) : sourceMode === 'list' ? (
+                                            <>
+                                                <div>
+                                                    <label className="block text-xs font-medium text-text-secondary uppercase mb-1">SharePoint Site URL</label>
+                                                    <input className="w-full px-3 py-2 border border-border-color rounded bg-card-bg text-text-primary text-sm"
+                                                        value={config.siteUrl} onChange={e => setConfig({ ...config, siteUrl: e.target.value })} placeholder="https://contoso.sharepoint.com/sites/MySite" />
+                                                </div>
+                                                <div className="flex gap-2 items-end">
+                                                    <div className="flex-1">
+                                                        <label className="block text-xs font-medium text-text-secondary uppercase mb-1">Select List</label>
+                                                        <select
+                                                            disabled={!isListsLoaded}
+                                                            className="w-full px-3 py-2 border border-border-color rounded bg-card-bg text-text-primary text-sm disabled:opacity-50"
+                                                            value={config.listName}
+                                                            onChange={e => setConfig({ ...config, listName: e.target.value })}
+                                                        >
+                                                            {!isListsLoaded && <option>Connect to site first...</option>}
+                                                            {availableLists.map(list => (
+                                                                <option key={list.Title} value={list.Title}>{list.Title} ({list.ItemCount} items)</option>
+                                                            ))}
+                                                        </select>
+                                                    </div>
+                                                    {!isListsLoaded && (
+                                                        <button onClick={fetchLists} className="px-4 py-2 bg-agilent-blue text-white hover:bg-agilent-dark rounded text-sm transition-colors">
+                                                            Connect
+                                                        </button>
+                                                    )}
+                                                </div>
+
+                                                <button
+                                                    onClick={handleFetchItems}
+                                                    disabled={!isListsLoaded}
+                                                    className={window.cn(
+                                                        "w-full py-2.5 text-white rounded flex items-center justify-center gap-2 font-medium transition-all",
+                                                        isListsLoaded ? "bg-agilent-blue hover:bg-agilent-dark shadow-sm" : "bg-gray-400 cursor-not-allowed"
+                                                    )}
+                                                >
+                                                    <Icon name="download-cloud" size={18} /> Fetch List Items
+                                                </button>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <div>
+                                                    <label className="block text-xs font-medium text-text-secondary uppercase mb-1">OneDrive / SharePoint Share Link</label>
+                                                    <input className="w-full px-3 py-2 border border-border-color rounded bg-card-bg text-text-primary text-sm"
+                                                        value={config.excelUrl} onChange={e => setConfig({ ...config, excelUrl: e.target.value })}
+                                                        placeholder="Paste the 'Anyone with the link' or direct link here..." />
+                                                </div>
+                                                <div className="text-[11px] text-text-secondary bg-gray-50 dark:bg-white/5 p-2 rounded border border-border-color/50">
+                                                    <p><strong>Tip:</strong> Use the <b>"Share"</b> button in OneDrive/Excel and copy the link. Ensure the link is accessible in this browser.</p>
+                                                </div>
+                                                <button
+                                                    onClick={handleFetchExcel}
+                                                    className="w-full py-2.5 bg-agilent-blue text-white rounded flex items-center justify-center gap-2 font-medium hover:bg-agilent-dark shadow-sm transition-all"
+                                                >
+                                                    <Icon name="file-spreadsheet" size={18} /> Fetch Excel Data
+                                                </button>
+                                            </>
+                                        )}
+                                    </div>
+
+                                    {statusMsg && <p className="text-sm text-center text-text-secondary animate-pulse">{statusMsg}</p>}
+                                </div>
+                            )}
+
+                            {step === 'mapping' && (
+                                <div className="space-y-4">
+                                    <p className="text-sm text-text-secondary">Map your SharePoint columns to the dashboard fields.</p>
+                                    <div className="grid gap-3">
+                                        {SYSTEM_FIELDS.map(field => (
+                                            <div key={field.key} className="grid grid-cols-2 items-center gap-4">
+                                                <label className="text-sm font-medium text-text-primary">
+                                                    {field.label} {field.required && <span className="text-red-500">*</span>}
+                                                </label>
+                                                <select
+                                                    className="px-3 py-2 border border-border-color rounded text-sm bg-card-bg text-text-primary"
+                                                    value={mapping[field.key] || ''}
+                                                    onChange={(e) => setMapping(prev => ({ ...prev, [field.key]: e.target.value }))}
+                                                >
+                                                    <option value="">-- Ignore --</option>
+                                                    {fileHeaders.map(h => (
+                                                        <option key={h} value={h}>{h}</option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        {step === 'mapping' && (
+                            <div className="p-4 border-t border-border-color flex justify-end gap-3 sticky bottom-0 bg-card-bg">
+                                <button onClick={() => setStep('config')} className="px-4 py-2 text-sm text-text-secondary hover:bg-bg-main rounded">Back</button>
+                                <button onClick={handleProcess} className="px-5 py-2 text-sm bg-agilent-blue text-white rounded hover:bg-agilent-dark shadow-sm">Load Data</button>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        // ---------------------------------------------------------
+        // COMPONENTS (Common)
+        // ---------------------------------------------------------
+
+        // Icon wrapper
+        window.DashboardApp.Icon = ({ name, size = 16, className, color = "currentColor" }) => {
+            const { useEffect, useRef } = React;
+            const ref = useRef(null);
+
+            useEffect(() => {
+                if (window.lucide && ref.current) {
+                    window.lucide.createIcons({
+                        root: ref.current,
+                        nameAttr: 'data-icon-name',
+                        attrs: {
+                            width: size,
+                            height: size,
+                            stroke: color,
+                            class: window.cn(className)
+                        }
+                    });
+                }
+            }, [name, size, className, color]);
+
+            return <span ref={ref} data-icon-name={name} style={{ display: 'inline-flex' }}></span>;
+        };
+
+        // Chart.js Wrapper
+        window.DashboardApp.BaseChart = ({ type, data, options, className }) => {
+            const canvasRef = React.useRef(null);
+            const chartInstanceRef = React.useRef(null);
+
+            React.useEffect(() => {
+                if (!canvasRef.current) return;
+                if (chartInstanceRef.current) {
+                    chartInstanceRef.current.destroy();
+                }
+
+                const ctx = canvasRef.current.getContext('2d');
+                const defaultOptions = {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { grid: { display: false }, ticks: { color: document.documentElement.classList.contains('dark') ? '#a0a0a0' : '#605e5c', font: { size: 10 } } },
+                        y: { grid: { color: document.documentElement.classList.contains('dark') ? '#333' : '#e1dfdd' }, ticks: { color: document.documentElement.classList.contains('dark') ? '#a0a0a0' : '#605e5c', font: { size: 10 } } }
+                    },
+                    ...options
+                };
+
+                chartInstanceRef.current = new Chart(ctx, {
+                    type: type || 'bar',
+                    data: data,
+                    options: defaultOptions
+                });
+
+                return () => {
+                    if (chartInstanceRef.current) chartInstanceRef.current.destroy();
+                };
+            }, [type, data, options]);
+
+            return <canvas ref={canvasRef} className={className}></canvas>;
+        };
+
+        // KPI Card
+        window.DashboardApp.KpiCard = ({ label, value, isHighlight }) => {
+            return (
+                <div className={window.cn("bg-card-bg rounded-lg p-4 text-center shadow-sm border-l-4 transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-md", isHighlight ? "border-[#00B294]" : "border-agilent-blue")}>
+                    <div className={window.cn("text-3xl font-bold leading-tight mb-1", isHighlight ? "text-[#00B294]" : "text-agilent-blue")}>{value}</div>
+                    <div className="text-[11px] text-text-secondary uppercase tracking-wider font-medium">{label}</div>
+                </div>
+            );
+        };
+
+        // Chart Card
+        window.DashboardApp.ChartCard = ({ title, children, className }) => {
+            return (
+                <div className={window.cn("bg-card-bg rounded-lg p-4 shadow-sm h-full", className)}>
+                    <div className="text-[13px] font-semibold text-text-primary mb-3 pb-2 border-b border-border-color">{title}</div>
+                    <div className="relative w-full h-[200px]">{children}</div>
+                </div>
+            );
+        };
+
+        // Data Table
+        window.DashboardApp.DataTable = ({ title, columns, data, className }) => {
+            return (
+                <div className={window.cn("bg-card-bg rounded-lg p-4 shadow-sm overflow-hidden", className)}>
+                    {title && (
+                        <div className="text-[13px] font-semibold text-text-primary mb-3 pb-2 border-b border-border-color">{title}</div>
+                    )}
+                    <div className="overflow-x-auto custom-scrollbar">
+                        <table className="w-full border-collapse text-[13px]">
+                            <thead>
+                                <tr>
+                                    {columns.map((col, idx) => (
+                                        <th key={idx} className="bg-agilent-light dark:bg-agilent-light/10 text-agilent-dark dark:text-agilent-blue p-2.5 text-left font-semibold border-b-2 border-agilent-blue sticky top-0">
+                                            {col.header}
+                                        </th>
+                                    ))}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {data.length === 0 ? (
+                                    <tr><td colSpan={columns.length} className="p-5 text-center text-text-secondary">No data available</td></tr>
+                                ) : (
+                                    data.map((row, rIdx) => (
+                                        <tr key={rIdx} className="hover:bg-agilent-light dark:hover:bg-white/5 transition-colors">
+                                            {columns.map((col, cIdx) => (
+                                                <td key={cIdx} className="p-2.5 border-b border-border-color whitespace-nowrap">
+                                                    {col.render ? col.render(row) : row[col.accessor]}
+                                                </td>
+                                            ))}
+                                        </tr>
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            );
+        };
+
+        // ---------------------------------------------------------
+        // COMPONENTS (Layout)
+        // ---------------------------------------------------------
+
+        window.DashboardApp.Header = ({ activeTab, onTabChange, onUploadClick }) => {
+            const { Icon } = window.DashboardApp;
+            return (
+                <header className="bg-gradient-to-r from-agilent-blue to-agilent-dark p-3 px-5 flex items-center justify-between shadow-md text-white">
+                    <div className="flex items-center gap-3">
+                        <svg className="w-10 h-10" viewBox="0 0 100 100">
+                            <circle cx="50" cy="50" r="8" fill="white" />
+                            <circle cx="50" cy="20" r="5" fill="white" />
+                            <circle cx="50" cy="80" r="5" fill="white" />
+                            <circle cx="20" cy="50" r="5" fill="white" />
+                            <circle cx="80" cy="50" r="5" fill="white" />
+                            <circle cx="28" cy="28" r="4" fill="white" />
+                            <circle cx="72" cy="28" r="4" fill="white" />
+                            <circle cx="28" cy="72" r="4" fill="white" />
+                            <circle cx="72" cy="72" r="4" fill="white" />
+                            <circle cx="50" cy="5" r="2" fill="white" />
+                            <circle cx="50" cy="95" r="2" fill="white" />
+                            <circle cx="5" cy="50" r="2" fill="white" />
+                            <circle cx="95" cy="50" r="2" fill="white" />
+                            <circle cx="15" cy="15" r="2" fill="white" />
+                            <circle cx="85" cy="15" r="2" fill="white" />
+                            <circle cx="15" cy="85" r="2" fill="white" />
+                            <circle cx="85" cy="85" r="2" fill="white" />
+                        </svg>
+                        <span className="text-xl font-semibold tracking-wide">Customer Visit App</span>
+                    </div>
+                    <nav className="flex gap-1">
+                        {['executive', 'country', 'sales'].map((tab) => (
+                            <button key={tab} onClick={() => onTabChange(tab)} className={window.cn("px-5 py-2.5 rounded-t-md text-sm font-medium transition-all duration-200", activeTab === tab ? "bg-bg-main text-agilent-blue" : "bg-white/10 text-white/80 hover:bg-white/20 hover:text-white")}>
+                                {tab.charAt(0).toUpperCase() + tab.slice(1)} {tab === 'executive' ? 'Summary' : 'View'}
+                            </button>
+                        ))}
+                    </nav>
+                    <button onClick={onUploadClick} className="flex items-center gap-2 bg-white/15 border border-white/30 text-white px-4 py-2 rounded-md text-sm hover:bg-white/25 transition-colors">
+                        <Icon name="upload-cloud" size={16} />
+                        <span>Manage Data</span>
+                    </button>
+                </header>
+            );
+        };
+
+        window.DashboardApp.FilterBar = () => {
+            const { useContext } = React;
+            const { filters, setFilters, uniqueValues, resetDashboard, dataMeta } = React.useContext(window.DashboardApp.DashboardContext);
+            const { Icon } = window.DashboardApp;
+
+            const SelectFilter = ({ label, id, options, value, onChange }) => (
+                <div className="flex flex-col gap-0.5">
+                    <span className="text-[10px] text-text-secondary uppercase tracking-wider font-medium">{label}</span>
+                    <select className="py-1.5 px-2.5 border border-border-color rounded text-[13px] bg-card-bg text-text-primary min-w-[100px] cursor-pointer focus:outline-none focus:border-agilent-blue focus:ring-2 focus:ring-agilent-blue/20" value={value} onChange={(e) => onChange(e.target.value)}>
+                        <option value="all">All</option>
+                        {options.map(opt => (<option key={opt} value={opt}>{opt}</option>))}
+                    </select>
+                </div>
+            );
+
+            return (
+                <div>
+                    <div className="bg-card-bg px-5 py-2 flex items-center gap-4 text-xs border-b border-border-color">
+                        <span className="font-semibold text-text-secondary">Data Source:</span>
+                        <div className="flex items-center gap-1.5">
+                            <span className={window.cn("w-2 h-2 rounded-full", dataMeta.loaded ? "bg-[#00B294]" : "bg-text-secondary")}></span>
+                            <span>{dataMeta.loaded ? `${dataMeta.fileName} (${dataMeta.rowCount} rows)` : "No data loaded (using sample data)"}</span>
+                        </div>
+                        <button onClick={resetDashboard} className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded text-text-secondary border border-transparent hover:border-agilent-blue hover:text-white hover:bg-agilent-blue transition-all">
+                            <Icon name="rotate-ccw" size={12} /> <span>Reset Dashboard</span>
+                        </button>
+                    </div>
+                    <div className="bg-card-bg px-5 py-3 flex flex-wrap items-center gap-3 border-b border-border-color">
+                        <SelectFilter label="Country" value={filters.country} options={uniqueValues.countries} onChange={(val) => setFilters(prev => ({ ...prev, country: val }))} />
+                        <SelectFilter label="GTM" value={filters.gtm} options={uniqueValues.gtm} onChange={(val) => setFilters(prev => ({ ...prev, gtm: val }))} />
+                        <SelectFilter label="Tech Upgrade" value={filters.techUpgrade} options={uniqueValues.techUpgrade || ['Yes', 'No']} onChange={(val) => setFilters(prev => ({ ...prev, techUpgrade: val }))} />
+                        <SelectFilter label="Demo Oppty" value={filters.demo} options={uniqueValues.demo || ['Yes', 'No']} onChange={(val) => setFilters(prev => ({ ...prev, demo: val }))} />
+                        <SelectFilter label="Fiscal Year" value={filters.fy} options={['FY23', 'FY24']} onChange={(val) => setFilters(prev => ({ ...prev, fy: val }))} />
+                        <SelectFilter label="Fiscal Quarter" value={filters.quarter} options={['Q1', 'Q2', 'Q3', 'Q4']} onChange={(val) => setFilters(prev => ({ ...prev, quarter: val }))} />
+                        <SelectFilter label="Product Line" value={filters.pl} options={uniqueValues.pl} onChange={(val) => setFilters(prev => ({ ...prev, pl: val }))} />
+                        <div className="flex flex-col gap-0.5 ml-auto md:ml-0">
+                            <span className="text-[10px] text-text-secondary uppercase tracking-wider font-medium">Granularity</span>
+                            <div className="flex gap-1 bg-border-color/50 p-0.5 rounded-md">
+                                {['Week', 'Month', 'Quarter'].map(gran => (
+                                    <button key={gran} onClick={() => setFilters(prev => ({ ...prev, granularity: gran.toLowerCase() }))} className={window.cn("px-3 py-1 text-xs rounded transition-all", filters.granularity === gran.toLowerCase() ? "bg-card-bg text-agilent-blue font-semibold shadow-sm" : "text-text-secondary hover:text-text-primary")}>
+                                        {gran}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // ---------------------------------------------------------
+        // CONTEXT
+        // ---------------------------------------------------------
+
+        window.DashboardApp.DashboardContext = React.createContext();
+        window.DashboardApp.DashboardProvider = ({ children }) => {
+            const [filters, setFilters] = React.useState({ country: 'all', gtm: 'all', techUpgrade: 'all', demo: 'all', fy: 'all', quarter: 'all', pl: 'all', granularity: 'week' });
+            const [dataMeta, setDataMeta] = React.useState({ loaded: false, fileName: '', rowCount: 0 });
+
+            // Helper: Fiscal Logic
+            const getFiscalInfo = (dateStr) => {
+                if (!dateStr) return { fy: 'Unknown', fq: 'Unknown', date: null };
+
+                // Assuming standard Excel date serial or string "YYYY-MM-DD" or "MM/DD/YYYY"
+                let date;
+                // Simple parser - try new Date. If number, assumes excel serial date.
+                if (!isNaN(dateStr) && typeof dateStr === 'number') {
+                    date = new Date((dateStr - (25567 + 2)) * 86400 * 1000); // basic excel to js conversion
+                } else {
+                    date = new Date(dateStr);
+                }
+
+                if (isNaN(date.getTime())) return { fy: 'Unknown', fq: 'Unknown', date: null };
+
+                const month = date.getMonth(); // 0-11. Nov is 10.
+                const year = date.getFullYear();
+
+                // FY Starts Nov 1.
+                // If Month is Nov (10) or Dec (11), FY is next year.
+                // e.g. Nov 2025 is FY26. Oct 2026 is FY26.
+                const fy = month >= 10 ? year + 1 : year;
+
+                // Quarters:
+                // Q1: Nov, Dec, Jan (10, 11, 0)
+                // Q2: Feb, Mar, Apr (1, 2, 3)
+                // Q3: May, Jun, Jul (4, 5, 6)
+                // Q4: Aug, Sep, Oct (7, 8, 9)
+                let fq;
+                if (month === 10 || month === 11 || month === 0) fq = 'Q1';
+                else if (month >= 1 && month <= 3) fq = 'Q2';
+                else if (month >= 4 && month <= 6) fq = 'Q3';
+                else fq = 'Q4';
+
+                return { fy: 'FY' + String(fy).slice(-2), fq, date };
+            };
+
+            const [rawData, setRawData] = React.useState([]);
+
+            // Filtering Logic
+            const filteredData = React.useMemo(() => {
+                if (!rawData || rawData.length === 0) return [];
+
+                return rawData.filter(row => {
+                    const match = (field, filterVal) => {
+                        if (!filterVal || filterVal === 'all') return true;
+                        const val = String(row[field] || '').trim();
+                        return val.toLowerCase() === filterVal.toLowerCase();
+                    };
+
+                    return match('Country', filters.country) &&
+                        match('GTM', filters.gtm) &&
+                        match('Tech Upgrade Oppty', filters.techUpgrade) &&
+                        match('Demo Oppty', filters.demo) &&
+                        match('Fiscal Year', filters.fy) &&
+                        match('Fiscal Quarter', filters.quarter) &&
+                        match('Product Line', filters.pl);
+                });
+            }, [rawData, filters]);
+
+            // Aggregation: KPI Data
+            const kpiData = React.useMemo(() => {
+                if (filteredData.length === 0) return { visits: 0, reps: 0, customers: 0, followups: 0, techUpgrade: 0, demo: 0 };
+
+                // Demo Categories
+                const demoCounts = { High: 0, Medium: 0, Low: 0, NA: 0 };
+                filteredData.forEach(r => {
+                    const val = String(r['Demo Oppty'] || 'NA').trim();
+                    // Normalize check
+                    if (/high/i.test(val)) demoCounts.High++;
+                    else if (/medium/i.test(val)) demoCounts.Medium++;
+                    else if (/low/i.test(val)) demoCounts.Low++;
+                    else demoCounts.NA++;
+                });
+
+                return {
+                    visits: filteredData.length,
+                    reps: new Set(filteredData.map(r => r['Sales Rep Name'])).size,
+                    customers: new Set(filteredData.map(r => r['Customer Name'])).size,
+                    followups: filteredData.filter(r => String(r['Follow-up Planned']).toLowerCase() === 'yes').length,
+                    techUpgrade: filteredData.filter(r => String(r['Tech Upgrade Oppty']).toLowerCase() === 'yes').length,
+                    demo: demoCounts.High + demoCounts.Medium + demoCounts.Low // Total valid opptys? Or show breakdown? KPI usually total number of opps.
+                };
+            }, [filteredData]);
+
+            // Aggregation: Chart Data
+            const chartData = React.useMemo(() => {
+                if (filteredData.length === 0) return { trends: { labels: [], datasets: [] }, countryDistribution: { labels: [], data: [] }, demoBreakdown: [] };
+
+                // Grouping Logic based on Granularity and Fiscal Calendar
+                // We need to sort and bucket data by the selected granularity
+                // Week: standard weeks?, Month: Fiscal Month, Quarter: FQ
+
+                const buckets = {};
+                const bucketOrder = [];
+
+                filteredData.forEach(row => {
+                    const d = row['_parsedDate'];
+                    if (!d) return;
+
+                    let key;
+                    if (filters.granularity === 'quarter') {
+                        key = row['Fiscal Quarter']; // Q1, Q2 etc (relative to current filter year usually, or just buckets)
+                        // Note: If 'fy' filter is 'all', grouping just by 'Q1' aggregates Q1-FY24 and Q1-FY25 together. This is standard pivot behavior unless hierarchical.
+                    } else if (filters.granularity === 'month') {
+                        // Fiscal Month names? Nov, Dec, Jan...
+                        key = d.toLocaleString('en-US', { month: 'short' });
+                    } else {
+                        // Week - use ISO week or simple week
+                        // For simplicity in this demo without Moment.js/date-fns:
+                        // Just use date string or simple bucket
+                        key = `W${Math.ceil(d.getDate() / 7)} ` + d.toLocaleString('en-US', { month: 'short' });
+                    }
+
+                    if (!buckets[key]) {
+                        buckets[key] = { visits: 0, reps: new Set(), customers: new Set(), followups: 0, tech: 0, demoHigh: 0, demoMed: 0, demoLow: 0 };
+                        if (!bucketOrder.includes(key)) bucketOrder.push(key);
+                    }
+
+                    const b = buckets[key];
+                    b.visits++;
+                    b.reps.add(row['Sales Rep Name']);
+                    b.customers.add(row['Customer Name']);
+                    if (String(row['Follow-up Planned']).toLowerCase() === 'yes') b.followups++;
+                    if (String(row['Tech Upgrade Oppty']).toLowerCase() === 'yes') b.tech++;
+
+                    const demoVal = String(row['Demo Oppty'] || '').toLowerCase();
+                    if (demoVal.includes('high')) b.demoHigh++;
+                    else if (demoVal.includes('medium')) b.demoMed++;
+                    else if (demoVal.includes('low')) b.demoLow++;
+                });
+
+                // Sorting Headers
+                // Simple sort for now, better sort would respect fiscal order (Nov->Oct) if Month
+                const monthOrder = { 'Nov': 1, 'Dec': 2, 'Jan': 3, 'Feb': 4, 'Mar': 5, 'Apr': 6, 'May': 7, 'Jun': 8, 'Jul': 9, 'Aug': 10, 'Sep': 11, 'Oct': 12 };
+                if (filters.granularity === 'month') {
+                    bucketOrder.sort((a, b) => (monthOrder[a] || 99) - (monthOrder[b] || 99));
+                } else if (filters.granularity === 'quarter') {
+                    bucketOrder.sort(); // Q1, Q2... correct
+                }
+
+                // Map to Arrays
+                const labels = bucketOrder;
+                const getData = (fn) => labels.map(l => fn(buckets[l]));
+
+                // Demo Breakdown (Pie/Donut data usually, or stack) using total counts
+                const demoTotal = { High: 0, Medium: 0, Low: 0, NA: 0 };
+                filteredData.forEach(r => {
+                    const val = String(r['Demo Oppty'] || '').toLowerCase();
+                    if (val.includes('high')) demoTotal.High++;
+                    else if (val.includes('medium')) demoTotal.Medium++;
+                    else if (val.includes('low')) demoTotal.Low++;
+                    else demoTotal.NA++;
+                });
+
+                // Country Dist
+                const countryCounts = {};
+                filteredData.forEach(r => { const c = r['Country'] || 'Unknown'; countryCounts[c] = (countryCounts[c] || 0) + 1; });
+
+                return {
+                    trends: {
+                        labels,
+                        visits: getData(b => b.visits),
+                        reps: getData(b => b.reps.size),
+                        customers: getData(b => b.customers.size),
+                        followups: getData(b => b.followups),
+                        tech: getData(b => b.tech),
+                        demoHigh: getData(b => b.demoHigh),
+                        demoMed: getData(b => b.demoMed),
+                        demoLow: getData(b => b.demoLow),
+                    },
+                    countryDistribution: { labels: Object.keys(countryCounts), data: Object.values(countryCounts) },
+                    demoBreakdown: [demoTotal.High, demoTotal.Medium, demoTotal.Low] // for a chart if needed
+                };
+            }, [filteredData, filters.granularity]);
+
+            // Aggregation: Tables
+            const derivedData = React.useMemo(() => {
+                const countryGroups = {};
+                const repGroups = {};
+                filteredData.forEach(row => {
+                    const c = row['Country'] || 'Unknown';
+                    if (!countryGroups[c]) countryGroups[c] = { country: c, visits: 0, reps: new Set(), customers: new Set(), followups: 0, techUpgrade: 0, demo: 0 };
+                    countryGroups[c].visits++;
+                    countryGroups[c].reps.add(row['Sales Rep Name']);
+                    countryGroups[c].customers.add(row['Customer Name']);
+                    if (String(row['Follow-up Planned']).toLowerCase() === 'yes') countryGroups[c].followups++;
+                    if (String(row['Tech Upgrade Oppty']).toLowerCase() === 'yes') countryGroups[c].techUpgrade++;
+                    if (String(row['Demo Oppty']).toLowerCase() !== 'na' && String(row['Demo Oppty']).toLowerCase() !== 'not applicable') countryGroups[c].demo++; // Count valid
+
+                    const r = row['Sales Rep Name'] || 'Unknown';
+                    if (!repGroups[r]) repGroups[r] = { name: r, visits: 0, customers: new Set() };
+                    repGroups[r].visits++;
+                    repGroups[r].customers.add(row['Customer Name']);
+                });
+                return {
+                    countryStats: Object.values(countryGroups).map(g => ({ ...g, reps: g.reps.size, customers: g.customers.size })).sort((a, b) => b.visits - a.visits),
+                    salesReps: Object.values(repGroups).map(g => ({ ...g, customers: g.customers.size })).sort((a, b) => b.visits - a.visits)
+                };
+            }, [filteredData]);
+
+            // Extract Unique Values
+            const uniqueValues = React.useMemo(() => {
+                const extract = (field) => Array.from(new Set(rawData.map(r => r[field]))).filter(Boolean).sort();
+                return {
+                    countries: extract('Country'),
+                    gtm: extract('GTM'),
+                    pl: extract('Product Line'),
+                    techUpgrade: ['Yes', 'No'],
+                    demo: ['High', 'Medium', 'Low', 'Not Applicable'],
+                    fy: Array.from(new Set(rawData.map(r => r['Fiscal Year']))).filter(Boolean).sort(),
+                    quarter: Array.from(new Set(rawData.map(r => r['Fiscal Quarter']))).filter(Boolean).sort()
+                };
+            }, [rawData]);
+
+            const processUploadedData = (fileName, data, mapping) => {
+                let processed = data;
+                if (mapping) {
+                    processed = data.map(row => {
+                        const newRow = {};
+                        Object.keys(mapping).forEach(systemKey => {
+                            const fileKey = mapping[systemKey];
+                            if (fileKey) newRow[systemKey] = row[fileKey];
+                        });
+                        return newRow;
+                    });
+                }
+
+                // Calculate Fiscal Fields
+                processed = processed.map(row => {
+                    const { fy, fq, date } = getFiscalInfo(row['Meeting Date']);
+                    return { ...row, 'Fiscal Year': fy, 'Fiscal Quarter': fq, '_parsedDate': date };
+                });
+
+                setRawData(processed);
+                setDataMeta({ loaded: true, fileName, rowCount: data.length });
+                setFilters(prev => ({ ...prev, country: 'all', gtm: 'all', fy: 'all', quarter: 'all', pl: 'all' }));
+            };
+
+            const resetDashboard = () => { setRawData([]); setDataMeta({ loaded: false, fileName: '', rowCount: 0 }); };
+
+            return (
+                <window.DashboardApp.DashboardContext.Provider
+                    value={{ filters, setFilters, kpiData, chartData, uniqueValues, dataMeta, mockData: derivedData, resetDashboard, processUploadedData }}
+                >
+                    {children}
+                </window.DashboardApp.DashboardContext.Provider>
+            );
+        };
+
+        // ---------------------------------------------------------
+        // VIEWS
+        // ---------------------------------------------------------
+
+        window.DashboardApp.ExecutiveView = () => {
+            const { kpiData, chartData, mockData } = React.useContext(window.DashboardApp.DashboardContext);
+            const { KpiCard, ChartCard, BaseChart, DataTable } = window.DashboardApp;
+            const colors = { primary: '#0091D5', secondary: '#00B294', high: '#d13438', med: '#ffaa44', low: '#fce100' };
+
+            return (
+                <div className="space-y-4 animate-in fade-in duration-500">
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+                        <KpiCard label="Count of Visits" value={kpiData.visits.toLocaleString()} />
+                        <KpiCard label="Count of Sales Reps" value={kpiData.reps} />
+                        <KpiCard label="Count of Customers" value={kpiData.customers.toLocaleString()} />
+                        <KpiCard label="Count of Follow-ups" value={kpiData.followups.toLocaleString()} />
+                        <KpiCard label="Tech Upgrade Oppty" value={kpiData.techUpgrade} isHighlight />
+                        <KpiCard label="Demo Oppty" value={kpiData.demo} isHighlight />
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <ChartCard title="Count of Visits"><BaseChart type="bar" data={{ labels: chartData.trends.labels, datasets: [{ data: chartData.trends.visits, backgroundColor: colors.primary, borderRadius: 4 }] }} /></ChartCard>
+                        <ChartCard title="Count of Sales Reps"><BaseChart type="bar" data={{ labels: chartData.trends.labels, datasets: [{ data: chartData.trends.reps, backgroundColor: colors.primary, borderRadius: 4 }] }} /></ChartCard>
+                        <ChartCard title="Count of Customers"><BaseChart type="bar" data={{ labels: chartData.trends.labels, datasets: [{ data: chartData.trends.customers, backgroundColor: colors.primary, borderRadius: 4 }] }} /></ChartCard>
+                        <ChartCard title="Count of Follow-ups Planned"><BaseChart type="bar" data={{ labels: chartData.trends.labels, datasets: [{ data: chartData.trends.followups, backgroundColor: colors.primary, borderRadius: 4 }] }} /></ChartCard>
+                    </div>
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        <ChartCard title="Count of Tech Upgrade"><BaseChart type="bar" data={{ labels: chartData.trends.labels, datasets: [{ data: chartData.trends.tech, backgroundColor: colors.secondary, borderRadius: 4 }] }} /></ChartCard>
+                        <ChartCard title="Count of Demo (By Priority)">
+                            <BaseChart
+                                type="bar"
+                                data={{
+                                    labels: chartData.trends.labels,
+                                    datasets: [
+                                        { label: 'High', data: chartData.trends.demoHigh, backgroundColor: colors.high, borderRadius: 2 },
+                                        { label: 'Medium', data: chartData.trends.demoMed, backgroundColor: colors.med, borderRadius: 2 },
+                                        { label: 'Low', data: chartData.trends.demoLow, backgroundColor: colors.low, borderRadius: 2 }
+                                    ]
+                                }}
+                                options={{
+                                    scales: { x: { stacked: true }, y: { stacked: true } },
+                                    plugins: { legend: { display: true, position: 'top', labels: { boxWidth: 10, font: { size: 10 } } } }
+                                }}
+                            />
+                        </ChartCard>
+                    </div>
+                    <DataTable title="Country Summary" columns={[{ header: 'Country', accessor: 'country' }, { header: 'Visits', accessor: 'visits' }, { header: 'Sales Reps', accessor: 'reps' }, { header: 'Customers', accessor: 'customers' }, { header: 'Follow-ups', accessor: 'followups' }, { header: 'Tech Upgrade', accessor: 'techUpgrade' }, { header: 'Demo', accessor: 'demo' }]} data={mockData.countryStats} />
+                </div>
+            );
+        };
+
+        window.DashboardApp.CountryView = () => {
+            const { kpiData, chartData } = React.useContext(window.DashboardApp.DashboardContext);
+            const { KpiCard, ChartCard, BaseChart } = window.DashboardApp;
+            const colors = { primary: '#0091D5' };
+
+            return (
+                <div className="space-y-4 animate-in fade-in duration-500">
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+                        <KpiCard label="Count of Visits" value={kpiData.visits.toLocaleString()} />
+                        <KpiCard label="Count of Sales Reps" value={kpiData.reps} />
+                        <KpiCard label="Count of Customers" value={kpiData.customers.toLocaleString()} />
+                        <KpiCard label="Count of Follow-ups" value={kpiData.followups.toLocaleString()} />
+                        <KpiCard label="Tech Upgrade Oppty" value={kpiData.techUpgrade} isHighlight />
+                        <KpiCard label="Demo Oppty" value={kpiData.demo} isHighlight />
+                    </div>
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        <div className="bg-card-bg rounded-lg p-4 shadow-sm h-full min-h-[300px]">
+                            <div className="text-[13px] font-semibold text-text-primary mb-3 pb-2 border-b border-border-color">Country View on Visits</div>
+                            <div className="relative w-full h-[300px] bg-gradient-to-br from-[#e8f4f8] to-[#d0e8f0] dark:from-[#1a3a4a] dark:to-[#0d2530] rounded-lg overflow-hidden flex items-center justify-center">
+                                <span className="text-agilent-blue/30 font-bold text-4xl select-none">MAP VIEW</span>
+                            </div>
+                        </div>
+                        <ChartCard title="Count of Visits Country-wise (Overall)">
+                            <BaseChart type="bar" data={{ labels: chartData.countryDistribution.labels, datasets: [{ data: chartData.countryDistribution.data, backgroundColor: colors.primary, borderRadius: 4 }] }} />
+                        </ChartCard>
+                    </div>
+                </div>
+            );
+        };
+
+        window.DashboardApp.SalesView = () => {
+            const { kpiData, mockData } = React.useContext(window.DashboardApp.DashboardContext);
+            const { KpiCard, DataTable } = window.DashboardApp;
+            const sortedReps = [...mockData.salesReps].sort((a, b) => b.visits - a.visits);
+
+            return (
+                <div className="space-y-4 animate-in fade-in duration-500">
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+                        <KpiCard label="Top GTM" value="Direct" />
+                        <KpiCard label="Top Product Line" value="LC" />
+                        <KpiCard label="Top Country" value="USA" />
+                        <KpiCard label="Count of Visits" value={kpiData.visits.toLocaleString()} />
+                        <KpiCard label="Count of Sales Reps" value={kpiData.reps} />
+                        <KpiCard label="Count of Customers" value={kpiData.customers.toLocaleString()} />
+                    </div>
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        <DataTable title="Top 10 Sales Reps" columns={[{ header: 'Rank', render: (row) => sortedReps.indexOf(row) + 1 }, { header: 'Sales Rep', accessor: 'name' }, { header: 'Visits', accessor: 'visits' }, { header: 'Customers', accessor: 'customers' }]} data={sortedReps} />
+                        <DataTable title="Bottom 10 Sales Reps" columns={[{ header: 'Rank', render: (row) => sortedReps.length - sortedReps.indexOf(row) }, { header: 'Sales Rep', accessor: 'name' }, { header: 'Visits', accessor: 'visits' }, { header: 'Customers', accessor: 'customers' }]} data={[...sortedReps].reverse()} />
+                    </div>
+                </div>
+            );
+        };
+
+
+        // ---------------------------------------------------------
+        // APP ENTRY
+        // ---------------------------------------------------------
+
+        window.DashboardApp.App = () => {
+            const { useState } = React;
+            const { DashboardProvider, Header, FilterBar, ExecutiveView, CountryView, SalesView, UploadModal } = window.DashboardApp;
+            const [activeTab, setActiveTab] = useState('executive');
+            const [isUploadOpen, setIsUploadOpen] = useState(false);
+
+            const renderView = () => {
+                switch (activeTab) {
+                    case 'executive': return <ExecutiveView />;
+                    case 'country': return <CountryView />;
+                    case 'sales': return <SalesView />;
+                    default: return <ExecutiveView />;
+                }
+            };
+
+            return (
+                <DashboardProvider>
+                    <div className="min-h-screen flex flex-col font-sans text-text-primary bg-bg-main transition-colors duration-200">
+                        <Header activeTab={activeTab} onTabChange={setActiveTab} onUploadClick={() => setIsUploadOpen(true)} />
+                        <FilterBar />
+                        <main className="flex-1 p-4 max-w-[1600px] w-full mx-auto">{renderView()}</main>
+                        <UploadModal isOpen={isUploadOpen} onClose={() => setIsUploadOpen(false)} />
+                    </div>
+                </DashboardProvider>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<window.DashboardApp.App />);
+
+    </script>
+</body>
+
+</html>
